@@ -1,0 +1,7 @@
+rm -rf .venv
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install ipykernel jupyter
+
+python -m ipykernel install --user --name snowenv --display-name "Python (snowenv)"
