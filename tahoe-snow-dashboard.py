@@ -83,13 +83,13 @@ def fetch_weather_data():
         response = requests.get(url, timeout=60)
         response.raise_for_status()
         data = response.json()
-        
+
         # Validate response structure
         if not isinstance(data, list) or len(data) == 0:
             raise ValueError("Invalid API response structure")
         if "data" not in data[0]:
             raise ValueError("Missing 'data' field in API response")
-        
+
         return data
     except requests.exceptions.Timeout:
         raise Exception("API request timed out. Please try again.")
@@ -142,7 +142,11 @@ def process_weather_data(weather_data_json):
     # Both WTEQ and SNWD are in inches, so result is in kg/m³
     # Only compute density where both values are positive and valid
     weather_data_df = weather_data_df.with_columns(
-        pl.when((pl.col("WTEQ").is_not_null()) & (pl.col("SNWD").is_not_null()) & (pl.col("SNWD") > 0))
+        pl.when(
+            (pl.col("WTEQ").is_not_null())
+            & (pl.col("SNWD").is_not_null())
+            & (pl.col("SNWD") > 0)
+        )
         .then(1000.0 * pl.col("WTEQ") / pl.col("SNWD"))
         .otherwise(None)
         .alias("snow_density")
@@ -151,11 +155,71 @@ def process_weather_data(weather_data_json):
     return weather_data_df
 
 
+# Chart styling helpers
+CHART_CONFIG = {
+    "bg": "#F9FBFD",
+    "title_color": "#2E3440",
+    "axis_label_color": "#A8B3C7",
+    "grid_color": "#EEF2F7",
+    "font_size": 11,
+    "title_font_size": 12,
+}
+
+
+def create_axis(grid=True):
+    """Create standardized axis configuration"""
+    return alt.Axis(
+        grid=grid,
+        gridColor=CHART_CONFIG["grid_color"] if grid else None,
+        domain=False,
+        tickSize=0,
+        labelColor=CHART_CONFIG["axis_label_color"],
+    )
+
+
+def configure_chart(chart, title, height=400, legend=False):
+    """Apply consistent styling to charts"""
+    config = (
+        chart.properties(
+            background=CHART_CONFIG["bg"],
+            height=height,
+            title=alt.TitleParams(
+                text=title,
+                anchor="start",
+                fontSize=16,
+                color=CHART_CONFIG["title_color"],
+            ),
+        )
+        .configure_view(stroke=None)
+        .configure_axis(
+            labelFontSize=CHART_CONFIG["font_size"],
+            titleFontSize=CHART_CONFIG["title_font_size"],
+        )
+    )
+    if legend:
+        config = config.configure_legend(
+            labelFontSize=CHART_CONFIG["font_size"],
+            titleFontSize=CHART_CONFIG["title_font_size"],
+        )
+    return config
+
+
+def render_metric_card(value, unit, label):
+    """Helper to render metric cards with consistent styling"""
+    display_value = f"{value}{unit}" if value is not None else "N/A"
+    return f"""
+                <div class="metric-card">
+                    <p class="metric-value">{display_value}</p>
+                    <p class="metric-label">{label}</p>
+                </div>
+            """
+
+
 def get_latest_metrics(df):
     """Get the latest values for each metric with fallback for missing data"""
     if df.is_empty():
         raise ValueError("No data available")
-    
+
     metrics = {}
     latest_date = df.select(pl.col("date").max()).item()
 
@@ -192,33 +256,23 @@ with st.spinner("Loading latest conditions..."):
         st.caption(f"Last updated: {latest_date.strftime('%B %d, %Y at %I:%M %p')}")
 
         # Current conditions metrics
-        def render_metric_card(value, unit, label):
-            """Helper to render metric cards with consistent styling"""
-            display_value = f"{value}{unit}" if value is not None else "N/A"
-            return f"""
-                <div class="metric-card">
-                    <p class="metric-value">{display_value}</p>
-                    <p class="metric-label">{label}</p>
-                </div>
-            """
-
         col1, col2, col3 = st.columns(3)
 
         with col1:
             st.markdown(
-                render_metric_card(metrics.get('SNWD'), '"', 'Snow Depth'),
+                render_metric_card(metrics.get("SNWD"), '"', "Snow Depth"),
                 unsafe_allow_html=True,
             )
 
         with col2:
             st.markdown(
-                render_metric_card(metrics.get('TOBS'), '°F', 'Temperature'),
+                render_metric_card(metrics.get("TOBS"), "°F", "Temperature"),
                 unsafe_allow_html=True,
             )
 
         with col3:
             st.markdown(
-                render_metric_card(metrics.get('WTEQ'), '"', 'Snow Water Equivalent'),
+                render_metric_card(metrics.get("WTEQ"), '"', "Snow Water Equivalent"),
                 unsafe_allow_html=True,
             )
 
@@ -232,76 +286,27 @@ with st.spinner("Loading latest conditions..."):
         with tab1:
             # Base chart with x-axis encoding
             base = alt.Chart(weather_df).encode(
-                x=alt.X(
-                    "date:T",
-                    title="",
-                    axis=alt.Axis(
-                        grid=False, domain=False, tickSize=0, labelColor="#A8B3C7"
-                    ),
-                )
+                x=alt.X("date:T", title="", axis=create_axis(grid=False))
             )
 
             # Snow depth area chart
             snow_area = base.mark_area(
                 color="lightblue", interpolate="step-after", line=True
-            ).encode(
-                y=alt.Y(
-                    "SNWD:Q",
-                    title="Snow Depth (Inches)",
-                    axis=alt.Axis(
-                        grid=True,
-                        gridColor="#EEF2F7",
-                        domain=False,
-                        tickSize=0,
-                        labelColor="#A8B3C7",
-                    ),
-                )
-            )
+            ).encode(y=alt.Y("SNWD:Q", title="Snow Depth (Inches)", axis=create_axis()))
 
-            # Render chart
-            snow_depth_chart = (
-                snow_area.properties(
-                    background="#F9FBFD",
-                    title=alt.TitleParams(
-                        text="Snow Depth Over Time",
-                        anchor="start",
-                        fontSize=16,
-                        color="#2E3440",
-                    ),
-                )
-                .configure_view(stroke=None)
-                .configure_axis(labelFontSize=11, titleFontSize=12)
-            )
-
+            snow_depth_chart = configure_chart(snow_area, "Snow Depth Over Time")
             st.altair_chart(snow_depth_chart)
-            st.dataframe(weather_df)
 
         with tab2:
             # Temperature Chart
-            # Main temperature line chart
             temp_line = (
                 alt.Chart(weather_df)
                 .mark_line(color="#f59e0b", size=2, point=False)
                 .encode(
-                    x=alt.X(
-                        "date:T",
-                        title="",
-                        axis=alt.Axis(
-                            grid=False, domain=False, tickSize=0, labelColor="#A8B3C7"
-                        ),
-                    ),
-                    y=alt.Y(
-                        "TOBS:Q",
-                        title="Temperature (°F)",
-                        axis=alt.Axis(
-                            grid=True,
-                            gridColor="#EEF2F7",
-                            domain=False,
-                            tickSize=0,
-                            labelColor="#A8B3C7",
-                        ),
-                    ),
+                    x=alt.X("date:T", title="", axis=create_axis(grid=False)),
+                    y=alt.Y("TOBS:Q", title="Temperature (°F)", axis=create_axis()),
                     tooltip=["date:T", alt.Tooltip("TOBS:Q", format=".1f")],
+                    color=alt.value("#f59e0b"),
                 )
             )
 
@@ -312,18 +317,13 @@ with st.spinner("Loading latest conditions..."):
                 .encode(y="freezing_point:Q", color=alt.value("lightblue"))
             )
 
-            # Add color to temperature line for legend
-            temp_line = temp_line.encode(color=alt.value("#f59e0b"))
-
-            # Create legend data
+            # Legend layer
             legend_data = pl.DataFrame(
                 {
                     "legend": ["Observed Temperature", "Freezing Point (32°F)"],
                     "value": [0, 0],
                 }
             )
-
-            # Legend layer (invisible geometry but provides legend)
             legend_layer = (
                 alt.Chart(legend_data)
                 .mark_point(opacity=0)
@@ -341,23 +341,11 @@ with st.spinner("Loading latest conditions..."):
                 )
             )
 
-            temp_chart = (
-                (temp_line + freezing_line + legend_layer)
-                .properties(
-                    background="#F9FBFD",
-                    height=400,
-                    title=alt.TitleParams(
-                        text="Temperature Over Time",
-                        anchor="start",
-                        fontSize=16,
-                        color="#2E3440",
-                    ),
-                )
-                .configure_view(stroke=None)
-                .configure_axis(labelFontSize=11, titleFontSize=12)
-                .configure_legend(labelFontSize=11, titleFontSize=12)
+            temp_chart = configure_chart(
+                temp_line + freezing_line + legend_layer,
+                "Temperature Over Time",
+                legend=True,
             )
-
             st.altair_chart(temp_chart, use_container_width=True)
 
         with tab3:
@@ -368,103 +356,50 @@ with st.spinner("Loading latest conditions..."):
                     color="#06b6d4", opacity=0.3, interpolate="step-after", line=True
                 )
                 .encode(
-                    x=alt.X(
-                        "date:T",
-                        title="",
-                        axis=alt.Axis(
-                            grid=False, domain=False, tickSize=0, labelColor="#A8B3C7"
-                        ),
-                    ),
-                    y=alt.Y(
-                        "WTEQ:Q",
-                        title="SWE (inches)",
-                        axis=alt.Axis(
-                            grid=True,
-                            gridColor="#EEF2F7",
-                            domain=False,
-                            tickSize=0,
-                            labelColor="#A8B3C7",
-                        ),
-                    ),
+                    x=alt.X("date:T", title="", axis=create_axis(grid=False)),
+                    y=alt.Y("WTEQ:Q", title="SWE (inches)", axis=create_axis()),
                     tooltip=["date:T", alt.Tooltip("WTEQ:Q", format=".2f")],
                 )
             )
 
-            swe_chart = (
-                swe_area.properties(
-                    background="#F9FBFD",
-                    height=400,
-                    title=alt.TitleParams(
-                        text="Snow Water Equivalent Over Time",
-                        anchor="start",
-                        fontSize=16,
-                        color="#2E3440",
-                    ),
-                )
-                .configure_view(stroke=None)
-                .configure_axis(labelFontSize=11, titleFontSize=12)
-            )
-
+            swe_chart = configure_chart(swe_area, "Snow Water Equivalent Over Time")
             st.altair_chart(swe_chart, use_container_width=True)
 
-            # Snow Water Equivalent guide
+            st.markdown("---")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # SWE explanation with skier context
-            swe_guide_html = """
-<div style="background: linear-gradient(135deg, #cffafe 0%, #ecf0ff 100%); border-left: 4px solid #0891b2; padding: 1.5rem; border-radius: 8px;">
-    <h3 style="color: #164e63; margin-top: 0;">💧 Understanding Snow Water Equivalent (SWE)</h3>
-    <p style="color: #0e7490; font-size: 0.95rem; line-height: 1.6;">Snow Water Equivalent (SWE) measures the amount of water contained in the snowpack, expressed in inches. It represents how much liquid water you would have if all the snow melted. This is critical for water resource planning and helps predict runoff and water availability throughout the year.</p>
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-        <div style="background: rgba(255,255,255,0.7); padding: 1rem; border-radius: 6px; border-left: 3px solid #06b6d4;">
-            <p style="color: #164e63; font-weight: 600; margin: 0 0 0.5rem 0;">🎿 What It Means for Skiers</p>
-            <p style="color: #0e7490; font-size: 0.9rem; margin: 0;">Higher SWE indicates a more dense, stable snowpack with greater water content. This often means longer-lasting snow conditions and potentially better base stability for the season. Rising SWE suggests fresh snow has fallen.</p>
-        </div>
-        <div style="background: rgba(255,255,255,0.7); padding: 1rem; border-radius: 6px; border-left: 3px solid #0284c7;">
-            <p style="color: #164e63; font-weight: 600; margin: 0 0 0.5rem 0;">📊 SWE vs. Snow Depth</p>
-            <p style="color: #0e7490; font-size: 0.9rem; margin: 0;">Snow depth alone can be misleading—light, fluffy powder creates deep snow with low SWE, while heavy, wet snow creates less depth but higher SWE. Comparing both metrics gives the complete picture of snowpack quality and water content.</p>
-        </div>
-    </div>
-</div>
-            """
-            st.markdown(swe_guide_html, unsafe_allow_html=True)
+            st.markdown(
+                """💧 **Understanding Snow Water Equivalent (SWE)**
 
-        with tab4:
-            # Filter to rows with valid snow_density (avoid division by zero)
-            valid_density_df = weather_df.filter(pl.col("WTEQ") & pl.col("SNWD") > 0)
+SWE measures the amount of water contained in the snowpack, expressed in inches. It represents how much liquid water you would have if all the snow melted. This is critical for water resource planning and helps predict runoff and water availability throughout the year.
 
-            # Compute overall mean for reference line
-            mean_density = valid_density_df.select(pl.col("snow_density").mean()).item()
+🎿 **For Skiers**: Higher SWE indicates a denser, more stable snowpack with greater water content. This often means longer-lasting snow conditions and better base stability. Rising SWE suggests fresh snow has fallen.
 
-            # Base chart (shared x encoding)
-            base = alt.Chart(valid_density_df).encode(
-                x=alt.X(
-                    "date:T",
-                    title="",
-                    axis=alt.Axis(
-                        grid=False, domain=False, tickSize=0, labelColor="#A8B3C7"
-                    ),
-                )
+📊 **SWE vs. Snow Depth**: Snow depth alone can be misleading—light, fluffy powder creates deep snow with low SWE, while heavy, wet snow creates less depth but higher SWE. Comparing both metrics shows the complete snowpack picture."""
             )
 
-            # Snow density area with legend support
+        with tab4:
+            # Filter to rows with valid snow_density
+            valid_density_df = weather_df.filter(pl.col("WTEQ") & pl.col("SNWD") > 0)
+            mean_density = valid_density_df.select(pl.col("snow_density").mean()).item()
+
+            # Base chart
+            base = alt.Chart(valid_density_df).encode(
+                x=alt.X("date:T", title="", axis=create_axis(grid=False))
+            )
+
+            # Snow density area
             density_area = base.mark_area(interpolate="basis", opacity=0.6).encode(
                 y=alt.Y(
                     "snow_density:Q",
                     title="Snow Density (WTEQ / SNWD)",
-                    axis=alt.Axis(
-                        grid=True,
-                        gridColor="#EEF2F7",
-                        domain=False,
-                        tickSize=0,
-                        labelColor="#A8B3C7",
-                    ),
+                    axis=create_axis(),
                 ),
                 color=alt.value("#efe6ff"),
                 tooltip=["date:T", alt.Tooltip("snow_density:Q", format=".3f")],
             )
 
-            # 24-hour rolling mean (window of 24 points) — computed client-side by Vega-Lite
+            # 24-hour rolling mean
             rolling_mean = (
                 base.transform_window(
                     rolling_mean="mean(snow_density)",
@@ -482,15 +417,13 @@ with st.spinner("Loading latest conditions..."):
                 .encode(y="mean_density:Q", color=alt.value("#94a3b8"))
             )
 
-            # Create legend data for the three elements
+            # Legend layer
             legend_data = pl.DataFrame(
                 {
                     "legend": ["Snow Density", "24-Hour Rolling Mean", "Overall Mean"],
                     "value": [0, 0, 0],
                 }
             )
-
-            # Legend layer (invisible geometry but provides legend)
             legend_layer = (
                 alt.Chart(legend_data)
                 .mark_point(opacity=0)
@@ -512,70 +445,50 @@ with st.spinner("Loading latest conditions..."):
                 )
             )
 
-            density_chart = (
-                (density_area + rolling_mean + mean_rule + legend_layer)
-                .properties(
-                    background="#F9FBFD",
-                    height=420,
-                    title=alt.TitleParams(
-                        text="Snow Density Over Time (WTEQ / SNWD)",
-                        anchor="start",
-                        fontSize=16,
-                        color="#2E3440",
-                    ),
-                )
-                .configure_view(stroke=None)
-                .configure_axis(labelFontSize=11, titleFontSize=12)
-                .configure_legend(labelFontSize=11, titleFontSize=12)
+            density_chart = configure_chart(
+                density_area + rolling_mean + mean_rule + legend_layer,
+                "Snow Density Over Time (WTEQ / SNWD)",
+                height=420,
+                legend=True,
             )
-
             st.altair_chart(density_chart, use_container_width=True)
 
-            # Winter-themed snow density guide
+            st.markdown("---")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # Density guide with correct kg/m³ ranges based on USACE standards
-            density_guide_html = """
-<div style="background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%); border-left: 4px solid #0284c7; padding: 1.5rem; border-radius: 8px;">
-    <h3 style="color: #0c4a6e; margin-top: 0;">❄️ Understanding Snow Density (kg/m³)</h3>
-    <p style="color: #075985; font-size: 0.95rem; line-height: 1.6;">Snow density reveals the type and condition of snow. Calculated as ρ_s = (1000 × WTEQ) / SNWD in kg/m³. Lower density indicates lighter, fluffier snow, while higher density suggests heavier, more compacted or wet snow.</p>
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
-        <div style="background: rgba(255,255,255,0.7); padding: 1rem; border-radius: 6px; border-left: 3px solid #06b6d4;">
-            <p style="color: #0c4a6e; font-weight: 600; margin: 0 0 0.5rem 0;">🎿 Wild/Fresh Snow</p>
-            <p style="color: #075985; font-size: 0.9rem; margin: 0;"><strong>10 - 30 kg/m³</strong><br>Lightly compacted, freshly fallen powder. Ideal skiing conditions.</p>
-        </div>
-        <div style="background: rgba(255,255,255,0.7); padding: 1rem; border-radius: 6px; border-left: 3px solid #0ea5e9;">
-            <p style="color: #0c4a6e; font-weight: 600; margin: 0 0 0.5rem 0;">⛷️ New & Settling</p>
-            <p style="color: #075985; font-size: 0.9rem; margin: 0;"><strong>50 - 90 kg/m³</strong><br>Recently fallen snow beginning to settle and compress.</p>
-        </div>
-        <div style="background: rgba(255,255,255,0.7); padding: 1rem; border-radius: 6px; border-left: 3px solid #06b6d4;">
-            <p style="color: #0c4a6e; font-weight: 600; margin: 0 0 0.5rem 0;">💨 Wind-Toughened</p>
-            <p style="color: #075985; font-size: 0.9rem; margin: 0;"><strong>~280 kg/m³</strong><br>Dense snow compacted by wind. Good stability, harder to ski.</p>
-        </div>
-        <div style="background: rgba(255,255,255,0.7); padding: 1rem; border-radius: 6px; border-left: 3px solid #0284c7;">
-            <p style="color: #0c4a6e; font-weight: 600; margin: 0 0 0.5rem 0;">🧊 Hard Slab & Ice</p>
-            <p style="color: #075985; font-size: 0.9rem; margin: 0;"><strong>≥ 350 kg/m³</strong><br>Wind slab or refrozen ice. Hazardous and difficult terrain.</p>
-        </div>
-    </div>
-</div>
-            """
-            st.markdown(density_guide_html, unsafe_allow_html=True)
+            st.markdown(
+                """❄️ **Understanding Snow Density (kg/m³)**
+
+Snow density reveals the type and condition of snow. Calculated as ρ_s = (1000 × WTEQ) / SNWD in kg/m³. Lower density indicates lighter, fluffier snow, while higher density suggests heavier, more compacted or wet snow.
+
+| Condition | Range | Description |
+|-----------|-------|-------------|
+| 🎿 Wild/Fresh Snow | 10 - 30 | Lightly compacted, freshly fallen powder. Ideal skiing conditions. |
+| ⛷️ New & Settling | 50 - 90 | Recently fallen snow beginning to settle and compress. |
+| 💨 Wind-Toughened | ~280 | Dense snow compacted by wind. Good stability, harder to ski. |
+| 🧊 Hard Slab & Ice | ≥ 350 | Wind slab or refrozen ice. Hazardous and difficult terrain. |"""
+            )
 
         # Statistics section
         st.markdown("### 📈 30-Day Statistics")
         col1, col2, col3, col4 = st.columns(4)
 
-        snow_stats = weather_df.select("SNWD")
-        temp_stats = weather_df.select("TOBS")
+        # Compute all stats in single batch operation
+        stats = weather_df.select(
+            pl.col("SNWD").max().alias("max_snow"),
+            pl.col("SNWD").mean().alias("avg_snow"),
+            pl.col("TOBS").max().alias("max_temp"),
+            pl.col("TOBS").min().alias("min_temp"),
+        ).row(0, named=True)
 
         with col1:
-            st.metric("Max Snow Depth", f'{snow_stats.max().item():.0f}"')
+            st.metric("Max Snow Depth", f'{stats["max_snow"]:.0f}"')
         with col2:
-            st.metric("Avg Snow Depth", f'{snow_stats.mean().item():.1f}"')
+            st.metric("Avg Snow Depth", f'{stats["avg_snow"]:.1f}"')
         with col3:
-            st.metric("Max Temperature", f"{temp_stats.max().item():.0f}°F")
+            st.metric("Max Temperature", f"{stats['max_temp']:.0f}°F")
         with col4:
-            st.metric("Min Temperature", f"{temp_stats.min().item():.0f}°F")
+            st.metric("Min Temperature", f"{stats['min_temp']:.0f}°F")
 
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
