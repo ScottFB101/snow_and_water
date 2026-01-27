@@ -3,8 +3,6 @@ import requests
 import polars as pl
 import altair as alt
 
-# import strapegraphaic as stc
-
 # Page configuration
 st.set_page_config(
     page_title="Palisades Tahoe Snow Conditions",
@@ -74,18 +72,33 @@ st.markdown(
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def fetch_weather_data():
-    """Fetch weather data from USDA AWDB API"""
+    """Fetch weather data from USDA AWDB API with error handling"""
     duration = "HOURLY"
     elements = "SNWD%2CSNDN%2CSNRR%2CSWE%2CWTEQ%2CTOBS"
-
-    # Get data for the last 30 days
-    # end_date = datetime.now()
     start_date = "2025-10-01"
 
     url = f"https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=784%3ACA%3ASNTL&elements={elements}&duration={duration}&beginDate={start_date}&periodRef=END&centralTendencyType=NONE&returnFlags=false&returnOriginalValues=false&returnSuspectData=false"
 
-    response = requests.get(url)
-    return response.json()
+    try:
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Validate response structure
+        if not isinstance(data, list) or len(data) == 0:
+            raise ValueError("Invalid API response structure")
+        if "data" not in data[0]:
+            raise ValueError("Missing 'data' field in API response")
+        
+        return data
+    except requests.exceptions.Timeout:
+        raise Exception("API request timed out. Please try again.")
+    except requests.exceptions.ConnectionError:
+        raise Exception("Connection error. Please check your internet connection.")
+    except requests.exceptions.HTTPError as e:
+        raise Exception(f"API error: {e.response.status_code}")
+    except ValueError as e:
+        raise Exception(f"Invalid API response: {str(e)}")
 
 
 @st.cache_data(ttl=3600)
@@ -126,34 +139,40 @@ def process_weather_data(weather_data_json):
     weather_data_df = weather_data_df.with_columns(pl.col("WTEQ").forward_fill())
 
     # Add snow_density column using correct formula: ρ_s = (ρ_w * SWE) / D
-    # Both WTEQ and SNWD are in inches, so result is in g/cm³
-    # Multiply by 1000 to convert to kg/m³ for standard snow density units
+    # Both WTEQ and SNWD are in inches, so result is in kg/m³
+    # Only compute density where both values are positive and valid
     weather_data_df = weather_data_df.with_columns(
-        (1000.0 * pl.col("WTEQ") / pl.col("SNWD")).alias("snow_density")
-    ).with_columns(
-        pl.col("snow_density").fill_null(0)  # Replace NaN/null with 0
+        pl.when((pl.col("WTEQ").is_not_null()) & (pl.col("SNWD").is_not_null()) & (pl.col("SNWD") > 0))
+        .then(1000.0 * pl.col("WTEQ") / pl.col("SNWD"))
+        .otherwise(None)
+        .alias("snow_density")
     )
 
     return weather_data_df
 
 
 def get_latest_metrics(df):
-    """Get the latest values for each metric"""
+    """Get the latest values for each metric with fallback for missing data"""
+    if df.is_empty():
+        raise ValueError("No data available")
+    
     metrics = {}
-
-    # Get latest timestamp
     latest_date = df.select(pl.col("date").max()).item()
 
-    # Get latest values for each element from pivoted dataframe
+    # Get latest values for each element
     latest_row = df.filter(pl.col("date") == latest_date).row(0, named=True)
 
     for element in ["SNWD", "TOBS", "WTEQ"]:
-        if element in latest_row:
-            metrics[element] = latest_row.get(element, 0) or 0
+        value = latest_row.get(element)
+        if value is not None:
+            metrics[element] = value
         else:
-            # Fallback to most recent available
-            recent_row = df.sort("date", descending=True).head(1).row(0, named=True)
-            metrics[element] = recent_row.get(element, 0) or 0
+            # Fallback to most recent available value
+            available = df.select(element).drop_nulls()
+            if available.height > 0:
+                metrics[element] = available.item(-1, 0)
+            else:
+                metrics[element] = None
 
     return metrics, latest_date
 
@@ -173,38 +192,33 @@ with st.spinner("Loading latest conditions..."):
         st.caption(f"Last updated: {latest_date.strftime('%B %d, %Y at %I:%M %p')}")
 
         # Current conditions metrics
+        def render_metric_card(value, unit, label):
+            """Helper to render metric cards with consistent styling"""
+            display_value = f"{value}{unit}" if value is not None else "N/A"
+            return f"""
+                <div class="metric-card">
+                    <p class="metric-value">{display_value}</p>
+                    <p class="metric-label">{label}</p>
+                </div>
+            """
+
         col1, col2, col3 = st.columns(3)
 
         with col1:
             st.markdown(
-                f"""
-                <div class="metric-card">
-                    <p class="metric-value">{metrics.get('SNWD', 0)}"</p>
-                    <p class="metric-label">Snow Depth</p>
-                </div>
-            """,
+                render_metric_card(metrics.get('SNWD'), '"', 'Snow Depth'),
                 unsafe_allow_html=True,
             )
 
         with col2:
             st.markdown(
-                f"""
-                <div class="metric-card">
-                    <p class="metric-value">{metrics.get('TOBS', 0)}°F</p>
-                    <p class="metric-label">Temperature</p>
-                </div>
-            """,
+                render_metric_card(metrics.get('TOBS'), '°F', 'Temperature'),
                 unsafe_allow_html=True,
             )
 
         with col3:
             st.markdown(
-                f"""
-                <div class="metric-card">
-                    <p class="metric-value">{metrics.get('WTEQ', 0)}"</p>
-                    <p class="metric-label">Snow Water Equivalent</p>
-                </div>
-            """,
+                render_metric_card(metrics.get('WTEQ'), '"', 'Snow Water Equivalent'),
                 unsafe_allow_html=True,
             )
 
