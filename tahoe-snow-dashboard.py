@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import polars as pl
 import altair as alt
+from datetime import timedelta
 
 # Page configuration
 st.set_page_config(
@@ -17,52 +18,288 @@ st.set_page_config(
 #   3. Heatmap to visualize Year, Month, and some value (Snow Depth, Temp, etc)
 
 
-# Custom CSS for modern styling
+# Inject Tailwind CSS and modern styling
 st.markdown(
     """
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+    :root {
+        --primary-blue: #0369A1;
+        --primary-blue-light: #0EA5E9;
+        --slate-900: #0C4A6E;
+        --slate-800: #164E63;
+        --slate-700: #164E63;
+        --slate-300: #E0F2FE;
+        --slate-100: #F0F9FF;
+        --slate-50: #F0F9FF;
+        --cyan-50: #F0F9FF;
+        --cyan-500: #10B981;
+        --amber-500: #F59E0B;
+        --purple-600: #7C3AED;
+        --slate-400: #38BDF8;
+    }
+    
+    * {
+        --tw-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    body, html {
+        background: linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%) !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
+    }
+    
+    /* Override Streamlit's default dark theme */
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%) !important;
+    }
+    
+    [data-testid="stSidebar"] {
+        background: linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 100%) !important;
+    }
+    
     .main {
-        padding: 0rem 1rem;
+        padding: 2rem 1rem;
+        background: transparent !important;
     }
+    
+    section[data-testid="stAppViewContainer"] > div:first-child {
+        background: linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%) !important;
+    }
+    
+    /* Modern Metric Cards with Tailwind */
     .metric-card {
-    background: linear-gradient(145deg, #f5f5f7 0%, #ffffff 100%);
-    padding: 2rem;
-    border-radius: 18px;
-    color: #1d1d1f;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-    border: 1px solid rgba(0, 0, 0, 0.04);
-    transition: all 0.3s ease;
+        background: linear-gradient(135deg, #FFFFFF 0%, #F0F9FF 100%);
+        border: 2px solid #E0F2FE;
+        border-radius: 1.25rem;
+        padding: 2rem;
+        box-shadow: 0 10px 30px -5px rgba(3, 105, 161, 0.08);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        backdrop-filter: blur(10px);
     }
+    
     .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        transform: translateY(-6px) translateX(0);
+        box-shadow: 0 20px 40px -10px rgba(3, 105, 161, 0.2);
+        border-color: #BAE6FD;
+        background: linear-gradient(135deg, #FFFFFF 0%, #E0F2FE 100%);
     }
+    
     .metric-value {
-        font-size: 3rem;
-        font-weight: 600;
+        font-size: 2.5rem;
+        font-weight: 700;
         margin: 0;
-        background: linear-gradient(135deg, #0071e3 0%, #0077ed 100%);
+        background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
         letter-spacing: -0.02em;
+        line-height: 1.1;
     }
+    
     .metric-label {
-        font-size: 0.95rem;
-        color: #6e6e73;
+        font-size: 0.875rem;
+        color: #0C4A6E;
         margin-top: 0.75rem;
-        font-weight: 400;
+        font-weight: 500;
+        letter-spacing: 0.025em;
+        text-transform: capitalize;
+    }
+    
+    /* Header Styling */
+    h1 {
+        background: linear-gradient(135deg, #0369A1 0%, #0EA5E9 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-weight: 800;
+        font-size: 2.5rem;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.5rem;
+    }
+    
+    h2 {
+        color: #0369A1;
+        font-weight: 700;
+        font-size: 1.5rem;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Subheader */
+    .subheader-text {
+        color: #0C4A6E;
+        font-size: 1rem;
+        font-weight: 500;
         letter-spacing: 0.01em;
     }
-    h1 {
-        color: #1e293b;
-        font-weight: 700;
+    
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] button {
+        border-radius: 0.75rem;
+        border: 1px solid transparent;
+        padding: 0.75rem 1.5rem;
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #0C4A6E;
+        transition: all 0.3s ease;
+        background-color: transparent;
     }
-    .stPlotlyChart {
-        background-color: white;
-        border-radius: 10px;
+    
+    .stTabs [data-baseweb="tab-list"] button:hover {
+        color: #0369A1;
+        background-color: rgba(3, 105, 161, 0.05);
+        border-color: rgba(3, 105, 161, 0.15);
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(3, 105, 161, 0.1) 0%, rgba(14, 165, 233, 0.08) 100%);
+        color: #0369A1 !important;
+        border-color: #0369A1 !important;
+    }
+    
+    /* Chart Container Styling */
+    .stVegaLiteChart {
+        border-radius: 1.25rem;
+        overflow: hidden;
+        box-shadow: 0 10px 25px -5px rgba(3, 105, 161, 0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .stVegaLiteChart:hover {
+        box-shadow: 0 15px 35px -5px rgba(3, 105, 161, 0.18);
+    }
+    
+    /* Divider Styling */
+    hr {
+        border: none;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #BAE6FD, transparent);
+        margin: 2rem 0;
+    }
+    
+    /* Caption and Text */
+    .caption-text {
+        color: #0C4A6E;
+        font-size: 0.85rem;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+    }
+    
+    /* Markdown Content Styling */
+    .stMarkdown h3 {
+        color: #0369A1;
+        font-weight: 700;
+        font-size: 1.25rem;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .stMarkdown p {
+        color: #0C4A6E;
+        line-height: 1.6;
+        font-size: 0.95rem;
+    }
+    
+    /* Table Styling */
+    .stMarkdown table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1rem 0;
+        border-radius: 0.75rem;
+        overflow: hidden;
+        box-shadow: 0 4px 12px -2px rgba(3, 105, 161, 0.1);
+    }
+    
+    .stMarkdown table th {
+        background: linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 100%);
+        color: #0369A1;
+        font-weight: 700;
         padding: 1rem;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        text-align: left;
+        border-bottom: 2px solid #38BDF8;
+    }
+    
+    .stMarkdown table td {
+        color: #0C4A6E;
+        padding: 0.875rem 1rem;
+        border-bottom: 1px solid #E0F2FE;
+    }
+    
+    .stMarkdown table tbody tr:hover {
+        background-color: #F0F9FF;
+    }
+    
+    /* Spinner */
+    .stSpinner {
+        text-align: center;
+    }
+    
+    /* Success and Error Messages */
+    .stSuccess, .stError, .stInfo {
+        border-radius: 1rem;
+        border: 1px solid;
+        padding: 1.25rem 1.5rem;
+        font-weight: 500;
+    }
+    
+    .stSuccess {
+        background-color: #ecfdf5;
+        border-color: #a7f3d0;
+        color: #065f46;
+    }
+    
+    .stError {
+        background-color: #fef2f2;
+        border-color: #fecaca;
+        color: #7f1d1d;
+    }
+    
+    .stInfo {
+        background-color: #eff6ff;
+        border-color: #bfdbfe;
+        color: #1e40af;
+    }
+    
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .main {
+            padding: 1.5rem 1rem;
+        }
+        
+        h1 {
+            font-size: 2rem;
+        }
+        
+        .metric-card {
+            padding: 1.5rem;
+        }
+        
+        .metric-value {
+            font-size: 2rem;
+        }
+    }
+    
+    @media (max-width: 640px) {
+        .main {
+            padding: 1rem 0.75rem;
+        }
+        
+        h1 {
+            font-size: 1.75rem;
+        }
+        
+        .metric-card {
+            padding: 1.25rem;
+        }
+        
+        .metric-value {
+            font-size: 1.75rem;
+        }
+        
+        .stTabs [data-baseweb="tab-list"] button {
+            padding: 0.6rem 1rem;
+            font-size: 0.85rem;
+        }
     }
     </style>
 """,
@@ -204,13 +441,28 @@ def configure_chart(chart, title, height=400, legend=False):
     return config
 
 
-def render_metric_card(value, unit, label):
-    """Helper to render metric cards with consistent styling"""
+def render_metric_card(value, unit, label, change_percent=None, change_direction=None):
+    """Helper to render metric cards with consistent styling and percent change"""
     display_value = f"{value}{unit}" if value is not None else "N/A"
+
+    # Build change indicator HTML
+    change_html = ""
+    if change_percent is not None and change_direction is not None:
+        # If change is 0, show gray text with no arrow
+        if change_percent == 0:
+            change_html = '<p style="font-size: 0.75rem; color: #9CA3AF; margin-top: 0.5rem; font-weight: 600;">0.0% vs yesterday</p>'
+        else:
+            arrow = "↑" if change_direction == "up" else "↓"
+            color = (
+                "#10B981" if change_direction == "up" else "#EF4444"
+            )  # Green up, Red down
+            change_html = f'<p style="font-size: 0.75rem; color: {color}; margin-top: 0.5rem; font-weight: 600;">{arrow} {abs(change_percent):.1f}% vs yesterday</p>'
+
     return f"""
                 <div class="metric-card">
                     <p class="metric-value">{display_value}</p>
                     <p class="metric-label">{label}</p>
+                    {change_html}
                 </div>
             """
 
@@ -241,9 +493,81 @@ def get_latest_metrics(df):
     return metrics, latest_date
 
 
+def get_day_over_day_changes(df):
+    """Calculate percent change between today and yesterday using average values for key metrics"""
+    if df.is_empty():
+        return {}
+
+    # Get today's date (most recent)
+    latest_date = df.select(pl.col("date").max()).item()
+    today = latest_date.date()
+    yesterday = today - timedelta(days=1)
+
+    # Filter data for each day and compute daily averages
+    today_data = df.filter(pl.col("date").cast(pl.Date) == today).select(
+        pl.col("SNWD").mean().alias("snwd"),
+        pl.col("TOBS").mean().alias("tobs"),
+        pl.col("WTEQ").mean().alias("wteq"),
+    )
+
+    yesterday_data = df.filter(pl.col("date").cast(pl.Date) == yesterday).select(
+        pl.col("SNWD").mean().alias("snwd"),
+        pl.col("TOBS").mean().alias("tobs"),
+        pl.col("WTEQ").mean().alias("wteq"),
+    )
+
+    changes = {}
+
+    # Only calculate changes if both days have data
+    if today_data.height > 0 and yesterday_data.height > 0:
+        today_row = today_data.row(0, named=True)
+        yesterday_row = yesterday_data.row(0, named=True)
+
+        # Snow Depth change
+        if (
+            yesterday_row.get("snwd")
+            and today_row.get("snwd")
+            and yesterday_row["snwd"] != 0
+        ):
+            snwd_change = (
+                (today_row["snwd"] - yesterday_row["snwd"]) / yesterday_row["snwd"]
+            ) * 100
+            changes["snwd_percent"] = snwd_change
+            changes["snwd_direction"] = "up" if snwd_change >= 0 else "down"
+
+        # Temperature change
+        if (
+            yesterday_row.get("tobs")
+            and today_row.get("tobs")
+            and yesterday_row["tobs"] != 0
+        ):
+            tobs_change = (
+                (today_row["tobs"] - yesterday_row["tobs"]) / abs(yesterday_row["tobs"])
+            ) * 100
+            changes["tobs_percent"] = tobs_change
+            changes["tobs_direction"] = "up" if tobs_change >= 0 else "down"
+
+        # SWE change
+        if (
+            yesterday_row.get("wteq")
+            and today_row.get("wteq")
+            and yesterday_row["wteq"] != 0
+        ):
+            wteq_change = (
+                (today_row["wteq"] - yesterday_row["wteq"]) / yesterday_row["wteq"]
+            ) * 100
+            changes["wteq_percent"] = wteq_change
+            changes["wteq_direction"] = "up" if wteq_change >= 0 else "down"
+
+    return changes
+
+
 # Main app
 st.title("Palisades Tahoe Snow Conditions")
-st.markdown("### Real-time snow and weather data from USDA SNOTEL Station")
+st.markdown(
+    '<p class="subheader-text">❄️ Real-time snow and weather data from USDA SNOTEL Station</p>',
+    unsafe_allow_html=True,
+)
 
 # Fetch and process data
 with st.spinner("Loading latest conditions..."):
@@ -253,26 +577,50 @@ with st.spinner("Loading latest conditions..."):
         metrics, latest_date = get_latest_metrics(weather_df)
 
         # Display last update time
-        st.caption(f"Last updated: {latest_date.strftime('%B %d, %Y at %I:%M %p')}")
+        st.markdown(
+            f'<p class="caption-text">🕐 Last updated: {latest_date.strftime("%B %d, %Y at %I:%M %p")}</p>',
+            unsafe_allow_html=True,
+        )
+
+        # Get day-over-day changes (average values)
+        day_changes = get_day_over_day_changes(weather_df)
 
         # Current conditions metrics
         col1, col2, col3 = st.columns(3)
 
         with col1:
             st.markdown(
-                render_metric_card(metrics.get("SNWD"), '"', "Snow Depth"),
+                render_metric_card(
+                    metrics.get("SNWD"),
+                    '"',
+                    "Snow Depth",
+                    change_percent=day_changes.get("snwd_percent"),
+                    change_direction=day_changes.get("snwd_direction"),
+                ),
                 unsafe_allow_html=True,
             )
 
         with col2:
             st.markdown(
-                render_metric_card(metrics.get("TOBS"), "°F", "Temperature"),
+                render_metric_card(
+                    metrics.get("TOBS"),
+                    "°F",
+                    "Temperature",
+                    change_percent=day_changes.get("tobs_percent"),
+                    change_direction=day_changes.get("tobs_direction"),
+                ),
                 unsafe_allow_html=True,
             )
 
         with col3:
             st.markdown(
-                render_metric_card(metrics.get("WTEQ"), '"', "Snow Water Equivalent"),
+                render_metric_card(
+                    metrics.get("WTEQ"),
+                    '"',
+                    "Snow Water Equivalent",
+                    change_percent=day_changes.get("wteq_percent"),
+                    change_direction=day_changes.get("wteq_direction"),
+                ),
                 unsafe_allow_html=True,
             )
 
@@ -481,14 +829,26 @@ Snow density reveals the type and condition of snow. Calculated as ρ_s = (1000 
             pl.col("TOBS").min().alias("min_temp"),
         ).row(0, named=True)
 
-        with col1:
-            st.metric("Max Snow Depth", f'{stats["max_snow"]:.0f}"')
-        with col2:
-            st.metric("Avg Snow Depth", f'{stats["avg_snow"]:.1f}"')
-        with col3:
-            st.metric("Max Temperature", f"{stats['max_temp']:.0f}°F")
-        with col4:
-            st.metric("Min Temperature", f"{stats['min_temp']:.0f}°F")
+        # Modern stat cards with Tailwind-inspired styling
+        stat_items = [
+            ("Max Snow Depth", f'{stats["max_snow"]:.0f}"', "❄️"),
+            ("Avg Snow Depth", f'{stats["avg_snow"]:.1f}"', "📏"),
+            ("Max Temperature", f"{stats['max_temp']:.0f}°F", "🔥"),
+            ("Min Temperature", f"{stats['min_temp']:.0f}°F", "❄️"),
+        ]
+
+        cols = [col1, col2, col3, col4]
+        for col, (label, value, emoji) in zip(cols, stat_items):
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="metric-card">
+                        <p class="metric-label">{emoji} {label}</p>
+                        <p class="metric-value">{value}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
@@ -498,6 +858,7 @@ Snow density reveals the type and condition of snow. Calculated as ρ_s = (1000 
 
 # Footer
 st.markdown("---")
-st.caption(
-    "Data source: USDA Natural Resources Conservation Service SNOTEL Network | Station: Palisades Tahoe (784:CA:SNTL)"
+st.markdown(
+    '<p class="caption-text">🔗 Data source: USDA Natural Resources Conservation Service SNOTEL Network | Station: Palisades Tahoe (784:CA:SNTL)</p>',
+    unsafe_allow_html=True,
 )
