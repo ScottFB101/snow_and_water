@@ -367,17 +367,13 @@ def process_weather_data(weather_data_json):
     )
 
     # Pivot to get elements as columns
-    weather_data_df = weather_data_df.pivot(values="value", columns="elementCode")
+    weather_data_df = weather_data_df.pivot(on="elementCode", values="value")
 
-    # Sort by date to ensure forward-fill works correctly
+    # Sort by date to ensure diff() works correctly
     weather_data_df = weather_data_df.sort("date")
 
-    # Forward-fill WTEQ (daily measurement) to fill hourly gaps
-    weather_data_df = weather_data_df.with_columns(pl.col("WTEQ").forward_fill())
-
-    # Add snow_density column using correct formula: ρ_s = (ρ_w * SWE) / D
-    # Both WTEQ and SNWD are in inches, so result is in kg/m³
-    # Only compute density where both values are positive and valid
+    # Bulk snowpack density: ρ_s = (1000 × WTEQ) / SNWD in kg/m³
+    # Both WTEQ and SNWD are hourly readings in inches
     weather_data_df = weather_data_df.with_columns(
         pl.when(
             (pl.col("WTEQ").is_not_null())
@@ -389,8 +385,32 @@ def process_weather_data(weather_data_json):
         .alias("snow_density")
     )
 
+    # New-snow (layer) density: density of the snow that fell in the last hour.
+    # Computed from hour-over-hour deltas in SNWD and WTEQ.
+    # Only populated when accumulation >= MIN_ACCUMULATION_INCHES and WTEQ is also rising,
+    # which filters out settlement, melt, and sensor noise.
+    weather_data_df = weather_data_df.with_columns(
+        [
+            pl.col("SNWD").diff(1).alias("delta_SNWD"),
+            pl.col("WTEQ").diff(1).alias("delta_WTEQ"),
+        ]
+    )
+    weather_data_df = weather_data_df.with_columns(
+        pl.when(
+            (pl.col("delta_SNWD") >= MIN_ACCUMULATION_INCHES)
+            & (pl.col("delta_WTEQ") > 0)
+        )
+        .then(1000.0 * pl.col("delta_WTEQ") / pl.col("delta_SNWD"))
+        .otherwise(None)
+        .alias("new_snow_density")
+    )
+
     return weather_data_df
 
+
+# Minimum hourly snow depth increase (inches) to count as real accumulation.
+# Filters out sensor noise and minor settlement when computing new-snow density.
+MIN_ACCUMULATION_INCHES = 0.5
 
 # Chart styling helpers
 CHART_CONFIG = {
@@ -727,8 +747,10 @@ SWE measures the amount of water contained in the snowpack, expressed in inches.
             )
 
         with tab4:
-            # Filter to rows with valid snow_density
-            valid_density_df = weather_df.filter(pl.col("WTEQ") & pl.col("SNWD") > 0)
+            # Filter to rows with valid bulk snow_density
+            valid_density_df = weather_df.filter(
+                (pl.col("WTEQ") > 0) & (pl.col("SNWD") > 0)
+            )
             mean_density = valid_density_df.select(pl.col("snow_density").mean()).item()
 
             # Base chart
@@ -804,17 +826,69 @@ SWE measures the amount of water contained in the snowpack, expressed in inches.
             st.markdown("---")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            st.markdown(
-                """❄️ **Understanding Snow Density (kg/m³)**
+            # New-snow (layer) density chart
+            new_snow_df = weather_df.filter(pl.col("new_snow_density").is_not_null())
 
-Snow density reveals the type and condition of snow. Calculated as ρ_s = (1000 × WTEQ) / SNWD in kg/m³. Lower density indicates lighter, fluffier snow, while higher density suggests heavier, more compacted or wet snow.
+            if new_snow_df.height > 0:
+                new_snow_points = (
+                    alt.Chart(new_snow_df)
+                    .mark_point(size=80, filled=True, opacity=0.85)
+                    .encode(
+                        x=alt.X("date:T", title="", axis=create_axis(grid=False)),
+                        y=alt.Y(
+                            "new_snow_density:Q",
+                            title="New Snow Density (kg/m³)",
+                            axis=create_axis(),
+                        ),
+                        color=alt.value("#06b6d4"),
+                        tooltip=[
+                            "date:T",
+                            alt.Tooltip(
+                                "new_snow_density:Q",
+                                title="New Snow Density",
+                                format=".1f",
+                            ),
+                            alt.Tooltip(
+                                "delta_SNWD:Q", title="Accumulation (in)", format=".2f"
+                            ),
+                            alt.Tooltip(
+                                "delta_WTEQ:Q", title="SWE change (in)", format=".3f"
+                            ),
+                        ],
+                    )
+                )
+
+                new_snow_chart = configure_chart(
+                    new_snow_points,
+                    "New Snow Layer Density (accumulation hours only)",
+                    height=320,
+                )
+                st.altair_chart(new_snow_chart, use_container_width=True)
+                st.markdown(
+                    f'<p class="caption-text">Each point represents one hour of active snowfall '
+                    f'(≥ {MIN_ACCUMULATION_INCHES}" accumulation). '
+                    f"Hours with no accumulation are not plotted.</p>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.info("No accumulation hours recorded yet this season.")
+
+            st.markdown("---")
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            st.markdown(
+                f"""❄️ **Understanding Snow Density (kg/m³)**
+
+**Bulk Snowpack Density** (top chart) reflects the average density of the entire snowpack — old base layers, settled snow, and fresh snow combined. It tends to rise slowly throughout the season as the base compresses.
+
+**New Snow Layer Density** (bottom chart) shows the density of only the snow that fell in each individual hour, making it a much better indicator of current skiing conditions. Points only appear during active snowfall (≥ {MIN_ACCUMULATION_INCHES}" per hour).
 
 | Condition | Range | Description |
 |-----------|-------|-------------|
-| 🎿 Wild/Fresh Snow | 10 - 30 | Lightly compacted, freshly fallen powder. Ideal skiing conditions. |
-| ⛷️ New & Settling | 50 - 90 | Recently fallen snow beginning to settle and compress. |
-| 💨 Wind-Toughened | ~280 | Dense snow compacted by wind. Good stability, harder to ski. |
-| 🧊 Hard Slab & Ice | ≥ 350 | Wind slab or refrozen ice. Hazardous and difficult terrain. |"""
+| 🎿 Fresh Powder | 10 - 50 | Lightly compacted, freshly fallen powder. Ideal skiing conditions. |
+| ⛷️ New & Settling | 50 - 100 | Recently fallen snow beginning to settle and compress. |
+| 💨 Wind-Affected | ~200 | Denser snow deposited or compacted by wind. |
+| 🧊 Heavy/Wet Snow | ≥ 300 | High-water-content snow — heavy to ski, great for base building. |"""
             )
 
         # Statistics section
