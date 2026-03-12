@@ -125,6 +125,15 @@ st.markdown(
         margin-bottom: 1rem;
     }
     
+    /* Chart Title Styling */
+    .chart-title {
+        color: #0369A1;
+        font-weight: 700;
+        font-size: 1.25rem;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    
     /* Subheader */
     .subheader-text {
         color: #0C4A6E;
@@ -434,19 +443,23 @@ def create_axis(grid=True):
     )
 
 
-def configure_chart(chart, title, height=400, legend=False):
+def configure_chart(chart, title="", height=400, legend=False, show_title=False):
     """Apply consistent styling to charts"""
-    config = (
-        chart.properties(
-            background=CHART_CONFIG["bg"],
-            height=height,
-            title=alt.TitleParams(
-                text=title,
-                anchor="start",
-                fontSize=16,
-                color=CHART_CONFIG["title_color"],
-            ),
+    properties_dict = {
+        "background": CHART_CONFIG["bg"],
+        "height": height,
+    }
+
+    if show_title:
+        properties_dict["title"] = alt.TitleParams(
+            text=title,
+            anchor="start",
+            fontSize=16,
+            color=CHART_CONFIG["title_color"],
         )
+
+    config = (
+        chart.properties(**properties_dict)
         .configure_view(stroke=None)
         .configure_axis(
             labelFontSize=CHART_CONFIG["font_size"],
@@ -652,6 +665,11 @@ with st.spinner("Loading latest conditions..."):
         )
 
         with tab1:
+            st.markdown(
+                '<p class="chart-title">Snow Depth Over Time</p>',
+                unsafe_allow_html=True,
+            )
+
             # Base chart with x-axis encoding
             base = alt.Chart(weather_df).encode(
                 x=alt.X("date:T", title="", axis=create_axis(grid=False))
@@ -662,10 +680,15 @@ with st.spinner("Loading latest conditions..."):
                 color="lightblue", interpolate="step-after", line=True
             ).encode(y=alt.Y("SNWD:Q", title="Snow Depth (Inches)", axis=create_axis()))
 
-            snow_depth_chart = configure_chart(snow_area, "Snow Depth Over Time")
+            snow_depth_chart = configure_chart(snow_area)
             st.altair_chart(snow_depth_chart)
 
         with tab2:
+            st.markdown(
+                '<p class="chart-title">Temperature Over Time</p>',
+                unsafe_allow_html=True,
+            )
+
             # Temperature Chart
             temp_line = (
                 alt.Chart(weather_df)
@@ -711,12 +734,16 @@ with st.spinner("Loading latest conditions..."):
 
             temp_chart = configure_chart(
                 temp_line + freezing_line + legend_layer,
-                "Temperature Over Time",
                 legend=True,
             )
             st.altair_chart(temp_chart, use_container_width=True)
 
         with tab3:
+            st.markdown(
+                '<p class="chart-title">Snow Water Equivalent Over Time</p>',
+                unsafe_allow_html=True,
+            )
+
             # SWE Chart
             swe_area = (
                 alt.Chart(weather_df)
@@ -730,7 +757,7 @@ with st.spinner("Loading latest conditions..."):
                 )
             )
 
-            swe_chart = configure_chart(swe_area, "Snow Water Equivalent Over Time")
+            swe_chart = configure_chart(swe_area)
             st.altair_chart(swe_chart, use_container_width=True)
 
             st.markdown("---")
@@ -752,6 +779,11 @@ SWE measures the amount of water contained in the snowpack, expressed in inches.
                 (pl.col("WTEQ") > 0) & (pl.col("SNWD") > 0)
             )
             mean_density = valid_density_df.select(pl.col("snow_density").mean()).item()
+
+            st.markdown(
+                '<p class="chart-title">Snow Density Over Time (WTEQ / SNWD)</p>',
+                unsafe_allow_html=True,
+            )
 
             # Base chart
             base = alt.Chart(valid_density_df).encode(
@@ -817,7 +849,6 @@ SWE measures the amount of water contained in the snowpack, expressed in inches.
 
             density_chart = configure_chart(
                 density_area + rolling_mean + mean_rule + legend_layer,
-                "Snow Density Over Time (WTEQ / SNWD)",
                 height=420,
                 legend=True,
             )
@@ -826,50 +857,75 @@ SWE measures the amount of water contained in the snowpack, expressed in inches.
             st.markdown("---")
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # New-snow (layer) density chart
+            # New-snow (layer) density heatmap - last 120 days
+            st.markdown(
+                '<p class="chart-title">New Snow Layer Density (last 120 days)</p>',
+                unsafe_allow_html=True,
+            )
+
             new_snow_df = weather_df.filter(pl.col("new_snow_density").is_not_null())
 
             if new_snow_df.height > 0:
-                new_snow_points = (
-                    alt.Chart(new_snow_df)
-                    .mark_point(size=80, filled=True, opacity=0.85)
-                    .encode(
-                        x=alt.X("date:T", title="", axis=create_axis(grid=False)),
-                        y=alt.Y(
-                            "new_snow_density:Q",
-                            title="New Snow Density (kg/m³)",
-                            axis=create_axis(),
-                        ),
-                        color=alt.value("#06b6d4"),
-                        tooltip=[
-                            "date:T",
-                            alt.Tooltip(
-                                "new_snow_density:Q",
-                                title="New Snow Density",
-                                format=".1f",
-                            ),
-                            alt.Tooltip(
-                                "delta_SNWD:Q", title="Accumulation (in)", format=".2f"
-                            ),
-                            alt.Tooltip(
-                                "delta_WTEQ:Q", title="SWE change (in)", format=".3f"
-                            ),
-                        ],
-                    )
-                )
+                # Get date range for last 120 days
+                latest_date_hm = new_snow_df.select(pl.col("date").max()).item()
+                cutoff_date = latest_date_hm - timedelta(days=120)
 
-                new_snow_chart = configure_chart(
-                    new_snow_points,
-                    "New Snow Layer Density (accumulation hours only)",
-                    height=320,
-                )
-                st.altair_chart(new_snow_chart, use_container_width=True)
-                st.markdown(
-                    f'<p class="caption-text">Each point represents one hour of active snowfall '
-                    f'(≥ {MIN_ACCUMULATION_INCHES}" accumulation). '
-                    f"Hours with no accumulation are not plotted.</p>",
-                    unsafe_allow_html=True,
-                )
+                # Filter to last 60 days
+                new_snow_60d = new_snow_df.filter(pl.col("date") >= cutoff_date)
+
+                if new_snow_60d.height > 0:
+                    # Extract day and hour for heatmap binning
+                    heatmap_data = new_snow_60d.with_columns(
+                        [
+                            pl.col("date").dt.strftime("%m-%d").alias("day"),
+                            pl.col("date").dt.hour().alias("hour"),
+                        ]
+                    ).select(["day", "hour", "new_snow_density"])
+
+                    # Create heatmap
+                    heatmap = (
+                        alt.Chart(heatmap_data)
+                        .mark_rect()
+                        .encode(
+                            x=alt.X(
+                                "day:O",
+                                title="Date",
+                                axis=create_axis(grid=False),
+                            ),
+                            y=alt.Y(
+                                "hour:O",
+                                title="Hour of Day",
+                                axis=create_axis(grid=False),
+                                sort="ascending",
+                            ),
+                            color=alt.Color(
+                                "new_snow_density:Q",
+                                scale=alt.Scale(
+                                    scheme="blues",
+                                    domain=[0, 150],
+                                ),
+                                title="Density (kg/m³)",
+                            ),
+                            tooltip=[
+                                alt.Tooltip("day:O", title="Date"),
+                                alt.Tooltip("hour:O", title="Hour"),
+                                alt.Tooltip(
+                                    "new_snow_density:Q",
+                                    title="New Snow Density",
+                                    format=".1f",
+                                ),
+                            ],
+                        )
+                    )
+
+                    heatmap_chart = configure_chart(heatmap, height=320)
+                    st.altair_chart(heatmap_chart, use_container_width=True)
+                    st.markdown(
+                        '<p class="caption-text">Heatmap shows accumulation hours over the last 120 days. Darker blue indicates denser, heavier snow. Each cell represents one hour of active snowfall (≥ 0.5" accumulation).</p>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.info("No accumulation hours recorded in the last 120 days.")
             else:
                 st.info("No accumulation hours recorded yet this season.")
 
@@ -881,7 +937,7 @@ SWE measures the amount of water contained in the snowpack, expressed in inches.
 
 **Bulk Snowpack Density** (top chart) reflects the average density of the entire snowpack — old base layers, settled snow, and fresh snow combined. It tends to rise slowly throughout the season as the base compresses.
 
-**New Snow Layer Density** (bottom chart) shows the density of only the snow that fell in each individual hour, making it a much better indicator of current skiing conditions. Points only appear during active snowfall (≥ {MIN_ACCUMULATION_INCHES}" per hour).
+**New Snow Layer Density** (heatmap) shows the density of only the snow that fell in each individual hour, making it a much better indicator of current skiing conditions. Each cell represents one hour of active snowfall (≥ {MIN_ACCUMULATION_INCHES}" per hour).
 
 | Condition | Range | Description |
 |-----------|-------|-------------|
