@@ -314,10 +314,10 @@ def fetch_weather_data():
     elements = "SNWD%2CSNDN%2CSNRR%2CSWE%2CWTEQ%2CTOBS"
     start_date = "2025-10-01"
 
-    url = f"https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=784%3ACA%3ASNTL&elements={elements}&duration={duration}&beginDate={start_date}&periodRef=END&centralTendencyType=NONE&returnFlags=false&returnOriginalValues=false&returnSuspectData=false"
+    url = f"https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data?stationTriplets=784%3ACA%3ASNTL&elements={elements}&duration={duration}&beginDate={start_date}&returnFlags=false&returnOriginalValues=false&returnSuspectData=false"
 
     try:
-        response = requests.get(url, timeout=60)
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         data = response.json()
 
